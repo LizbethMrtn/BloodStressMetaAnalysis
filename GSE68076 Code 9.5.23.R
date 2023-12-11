@@ -1,0 +1,769 @@
+#Example code: Exploring a Dataset (with more detail)
+#Megan Hagenauer July 13, 2023
+#Flandreau Datset GSE68076 7.28.23 with Toni and Anne Support
+
+##################################
+
+#This code document is set up to provide an example of analyzing a single Gemma dataset
+#It combines many elements that we've already talked about.
+#To keep things neat and tidy, I'm only analyzing one dataset in this document & workspace
+
+#Example Dataset:
+#GSE81672 is an RNA-Seq experiment examining the effects of antidepressants in stressed mice.
+#... but I cut out all of the RNA-Seq specific code to make this version simpler for application to microarray
+
+##################################
+
+#Setting the working directory
+setwd("/Users/flandree/Documents/2023 2024 Sabbatical/01 UMich Project BrainAlchemy/Flandreau UM Data/7.28.23")
+
+##################################
+
+#I was previously demonstrating analyses using just the expression data
+
+#Gemma also has the ability to import some larger objects that include sample and gene/probe metadata
+#These objects are called Summarized Experiments and Expression Sets
+#Gemma recommends using Summarized Experiments, and peeking at these objects they definitely contain more info
+#... but I hadn't worked with them before, so I had to read a little about them:
+https://bioconductor.org/packages/release/bioc/manuals/SummarizedExperiment/man/SummarizedExperiment.pdf
+https://bioconductor.org/packages/release/bioc/vignettes/SummarizedExperiment/inst/doc/SummarizedExperiment.html
+
+#One of the benefits of these two objects is that they also allow us to read in the filtered expression data
+#Gemma applies a standardized filter across all platforms (RNA-Seq/microarray) to remove genes with minimal variance
+#These genes are likely to suffer from severe floor effects (very low expression/unmeasurable)
+#Or not actually be expressed at all and the measurements that we have are just noise.
+
+#I heard back from Paul about the actual cut offs that they use:
+#"There are two stages to our variance filter. 
+# First is just to remove genes with zero variance. 
+# The second is to remove genes that have too many identical values (within a small tolerance), 
+# where "too many" is currently defined as <70% distinct values, but we have tweaked this over time (slightly - we're never perfectly happy with anything)."
+#I call this a variance filter as a shorthand, of course it's not that exactly.
+#But the latter filter was originally intended to address cases where microarray data had been clipped by the submitter.
+#But it also has the effect of removing RNA-seq data that has very low counts (like, 1 count in a couple of samples).
+#It's quite permissive - it filters out data that causes problems for the analysis, but otherwise lets it go.
+#We used to have an expression level filter but we got rid of it long ago as being too contentious."
+
+#I am satisfied by this answer. 
+#Excluding low level expressed genes within an individual dataset reduces false positives due to noise within low-variance data
+#It also decreases the severity of the multiple comparisons correction (because there are fewer genes in the dataset)
+#Within a meta-analysis, we do not need to worry about effects caused by noise in individual datasets quite as much
+#So I would prefer to err on the side of including as many genes as possible.
+#So Paul's liberal filter to only toss out genes that are likely to cause problems with existing algorithms sounds good.
+
+#Instructions for function 
+gemma.R::get_dataset_object
+https://rdrr.io/github/PavlidisLab/Gemma-API/man/get_dataset_object.html
+#looks like we want to add filter=TRUE to use Gemma's filtered results (dropping genes with low variability)
+#looks like we can add consolidate="average" to consolidate the data for probes representing the same gene.
+#That won't matter as much for RNA-Seq data
+#E.g. it makes a small difference in this RNA-Seq dataset (~600 genes less in the consolidated version)
+#If we need to revert back to an RNA-Seq count matrix at some point, we may need to use the version with no consolidation
+
+#load useful code packages
+library(SummarizedExperiment)
+library(gemma.R)
+library(plyr)
+library(tidyr)
+
+#Input the summarized experiment object for your dataset: GSE68076 (FYI This takes a really long time and then shows up in the "data" area)
+SummarizedExperiment_Filtered<-gemma.R::get_dataset_object("GSE68076", type = 'se', filter=TRUE, consolidate="average")
+SummarizedExperiment_Filtered
+#Copied info from console
+##$`18807`
+##class: SummarizedExperiment 
+##dim: 15569 116 
+##metadata(8): title abstract ... GemmaSuitabilityScore taxon
+##assays(1): counts
+##rownames(15569): A_51_P100034 A_51_P100174 ... Averaged from A_51_P142320 A_52_P99848 Averaged from A_51_P499054
+##A_52_P99992
+##rowData names(4): Probe GeneSymbol GeneName NCBIid
+##colnames(116): C_hemibrain_10d_6w_rep1 SS_blood_5d_24h_rep5 ... SS_spleen_10d_6w_rep2 C_blood_10d_6w_rep2
+##colData names(5): factorValues organism part block treatment timepoint
+
+
+ExpressionData_Filtered<-assay(SummarizedExperiment_Filtered[[1]])
+str(ExpressionData_Filtered)
+#copied info from console
+##num [1:15569, 1:116] -1.594 -2.599 -0.503 -0.715 0.635 ...
+
+hist(ExpressionData_Filtered)
+#Produces a histogram of expression data (frequency of what?  each gene?) <-- EIF read more about this (MH 8.31.23 Frequency = number of values
+# of expression data matrix.  Each row = gene or probe; different expression values for each probe / row.  Gemma does log 2 regression on datasets it
+# can access.  Some it can't access (agilent) then it uses "external data" values that aren't standardized because we don't know what the "external analyst"
+# did with the data before it got to Gemma.  That can result in massive differences in expression data OR a duplication in the log transformation, which
+# creates an artificially low level of variability, which is also bad.  The histogram helps tell us if we need to update the transformation to have the 'correct'
+# degree of variability.). EIF histogram -5 to +7 looks like log 2 transformed values (typical = -5 to +12; if i see a range from -1 to +2.5 it's probably
+# double log transformed.  If the range is 100s or 1000s it likely hasn't been log 2 transformed at all)
+
+min(ExpressionData_Filtered)
+#[1] -11.54013 (MH 8.23 another way to judge range of values to determine if it's correctly log transformed.  The smallest value in an RNA seq dataset is
+## probably artificial so that they don't have to worry about zeros)
+#This is probably an artificial floor
+#A small positive value (e.g., 0.5) is often added to each datapoint before log transformation 
+#Because you can't log transform zeroes, e.g.: log2(0)
+#[1] -Inf
+
+#So this was the smallest value in the original dataset
+2^-11.54013
+#[1] 0.0003357954
+#Counts per million (not sure why we multiply by 30???? 8.23 This was for MH other dataset, probably unrelated to me since this is relevant to RNAseq)
+0.0003357954*30
+#0.01007386
+
+#Let's look at the mean vs. variance curve:
+ExpressionData_Filtered_MeanPerGene<-apply(ExpressionData_Filtered, 1, mean)
+ExpressionData_Filtered_SDPerGene<-apply(ExpressionData_Filtered, 1, sd)
+
+plot(ExpressionData_Filtered_SDPerGene~ExpressionData_Filtered_MeanPerGene)
+#heteroskedasticity = unequal variance.  Ideally this will be horizontal line.  The scattered dots could be a problem.
+#The trend/voom function will help this data still be useable in regression equations <- this will come up later
+
+#How many genes have zero variance?
+sum(ExpressionData_Filtered_SDPerGene==0)
+#[1] 0
+#good - those genes were filtered out as expected.
+
+#For that last bit of coding I made use of a trick
+#if you apply the function "sum" to a logical (true/false) vector, you count the number of "trues", e.g.,
+sum(c(TRUE, FALSE, TRUE, FALSE))
+#[1] 2
+
+#Unfortunately, if we subset the data (e.g., to focus on a region or specific groups) we may still have genes with zero variance 
+#So we'll have to come back and filter some more later <-- we'll get to this next
+
+########################### DATA SUBSETTING
+#Dataset Subsetting:
+#Before we do much more with the dataset, let's subset down to the samples that we actually plan to use:
+#First, we need to know what we have:
+#How to access different parts of the Summarized Experiment object:
+
+colData(SummarizedExperiment_Filtered[[1]])
+#data - organism part, block, treatment, timepoint
+head(colData(SummarizedExperiment_Filtered[[1]]))
+
+rowData(SummarizedExperiment_Filtered[[1]])
+#All of the annotation - Probe, GeneSymbol, GeneName, NCBIid
+head(rowData(SummarizedExperiment_Filtered[[1]]))
+
+#The distribution of samples from different brain regions or blood
+table(SummarizedExperiment_Filtered[[1]]$`organism part`)
+# blood hemibrain spleen
+#.  38.   39.       39
+
+#==============================================I'm interested in blood 
+
+#The distribution of the different phenotypes in this experiment
+table(SummarizedExperiment_Filtered[[1]]$treatment)
+#Reference Subject Role.   Social Stress
+#.       57.                   59
+#### purpose = check what we want to sub-set for. 
+#I just want to look at blood for both nonstress and stress treatment groups
+
+table(SummarizedExperiment_Filtered[[1]]$timepoint)
+#(1.5 weeks,5 days) (24 hours,10 days)  (24 hours,5 days)  (6 weeks,10 days) 
+#              30               28               29               29
+##### There were two time points of exposure... either 5 days or 10 days
+#### There were also three time points for time after stress... either 24 hours, 1.5 weeks, or 6 weeks
+
+#To code this filter: We don't use equals to mean "equals" in R, we use it to define objects
+### This is just an FYI lesson from Megan
+#===========MynewObject=c(1,2,3,4)
+#===========MynewObject<-c(1,2,3,4)
+#So "==" means equals, whereas "!=" means doesn't equal
+
+#When combining together criteria "&" means "AND", "|" (also called the pipe) means "OR"
+SampleFilter<-
+  SummarizedExperiment_Filtered[[1]]$`organism part`=="blood"
+
+
+#Subsetting the data to have only blood:
+SummarizedExperiment_Subset<-SummarizedExperiment_Filtered[[1]][,SampleFilter]
+
+SummarizedExperiment_Subset
+# class: SummarizedExperiment 
+# dim: 15569 rows by 38 columns (DIMENSIONS) 
+#This dataset is much smaller now
+
+#Sanity Check: Double-checking that the subsetting worked properly:
+table(SummarizedExperiment_Subset$`organism part`)
+###blood 
+###38 
+
+table(SummarizedExperiment_Subset$treatment)
+## reference subject role     social stress (SS) 
+#.           18                     20 
+
+
+#Pulling out a matrix of gene expression data for this subset (to use in functions that require matrices)
+ExpressionData_Subset<-assay(SummarizedExperiment_Subset)
+str(ExpressionData_Subset)
+# num [1:15569, 1:38] -0.743 1.135 4.13 1.578 -0.221 ...
+# - attr(*, "dimnames")=List of 2
+# ..$ : chr [1:15569] "A_51_P100034" "A_51_P100174" "A_51_P100218" "A_51_P100238" ...
+# ..$ : chr [1:38] "SS_blood_5d_24h_rep5" "C_blood_5d_24h_rep2" "SS_blood_5d_1.5w_rep1" "C_blood_5d_24h_rep3" ...
+########################### highlight text then use command shift c on mac to add # to each line
+
+#Outlier Removal:
+#This would be a good time to check for outliers and remove them if they are present.
+#Creating an example sample-sample correlation scatterplot (data for all genes for 1 sample versus the data for all genes for the second sample)
+plot(ExpressionData_Subset[,1]~ExpressionData_Subset[,2])
+
+#Creating a matrix showing how each sample correlates with every other sample:
+CorMatrix<-cor(ExpressionData_Subset)
+
+#Writing that matrix out to your working directory to save it:
+write.csv(CorMatrix, "CorMatrix.csv")
+#### open this file (from working directory in excel to find the specific ones that are outliers
+#### conditional formatting in excel...)
+
+#Creating a hierarchically clustered heatmap illustrating the sample-sample correlation matrix:
+heatmap(CorMatrix)
+#### diagonal line is a bit confusing because each item compared against itself should be the same.The samples that look
+##### white may be outliers.
+
+
+#Creating a boxplot illustrating the sample-sample correlations for each sample. Outliers should be obvious at this point.
+boxplot(CorMatrix)
+#Looks like maybe there are a few outliers.  Do this BEFORE the analysis so you're not p-hacking based on results that
+## look best...
+
+#If there was an outlier sample, you could remove it using subsetting similar to above by identifying it's column name
+#E.g. (leaving in the third potential outlier)
+OutlierFilter<-colnames(ExpressionData_Subset)!="C_blood_10d_24h_rep1" & colnames(ExpressionData_Subset)!="SS_blood_10d_6w_rep2"
+OutlierFilter
+# [1]  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE FALSE  TRUE  TRUE  TRUE  TRUE FALSE
+# [23]  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE
+#### THIS LINE OF CODE SEEMS TO WORK TO IDENTIFY BOTH OF THE OUTLIERS; we're leaving in the other one that looks like it's around 0.8 and we'll ask Megan :)
+
+SummarizedExperiment_Subset_noBad<-SummarizedExperiment_Subset[,OutlierFilter]
+SummarizedExperiment_Subset_noBad
+#class: SummarizedExperiment 
+#dim: 15569 36 (36 not 38 because the two outliers are removed)
+
+#If we *don't* have any outliers to remove, we can just rename our object so it works with the downstream code:
+## (8.31.23) don't run this for me .... SummarizedExperiment_Subset_noBad<-SummarizedExperiment_Subset
+
+#And then we will need to recreate the ExpressionData Matrix as well:
+ExpressionData_Subset_noBad<-assay(SummarizedExperiment_Subset_noBad)
+str(ExpressionData_Subset_noBad)
+#num [1:15569, 1:36] -0.743 1.135 4.13 1.578 -0.221 ...
+
+########################### <-- signifies section break
+#Filtering Genes...Again:
+#Now that we have subsetted our data, we have a new problem:
+#Gemma filtered out genes that lacked variability in the full dataset
+#..but that doesn't mean all of the remaining genes have variability in this particular subset of samples
+
+ExpressionData_Subset_noBad_SDperGene<-apply(ExpressionData_Subset_noBad, 1, sd)
+min(ExpressionData_Subset_noBad_SDperGene)
+#[1] 0.1110276 <-- We are running the standard deviation function and looking for what the minimum is.  If there's no variation, that's a problem
+### (can't divide by zero and whatnot).  If we had "zero" for this answer, we'd need to do the next part asking how many samples have zero variability
+
+sum(ExpressionData_Subset_noBad_SDperGene==0)
+#[1] 0
+## No genes with no variability, which is useful because those genes would cause problems - you can't run stats on a variable with no variability! - let's get rid of them.
+### If this showed up as a non-zero number I would need to run the rest of the code in this section
+#...But there is more:
+#We may still have issues with genes that lack any variability *for any particular subgroup of interest* as well.
+
+#This function calculates the StDev for each treatment group for a particular gene (row of data) because still can't div by zero and we 
+##don't want to crash:
+tapply(ExpressionData_Subset_noBad[1,], SummarizedExperiment_Subset_noBad$treatment, sd)
+#reference subject role     social stress (SS) 
+#       0.8017683              0.7220126 
+
+#We want the minimum sd for all of our groups to not be zero:
+min(tapply(ExpressionData_Subset_noBad[1,], SummarizedExperiment_Subset_noBad$treatment, sd))!=0
+#[1] TRUE
+
+#... and we need to know that for all rows (this next line of code takes a long time to run)
+GenesToFilter<-apply(ExpressionData_Subset_noBad, 1, function(y) (min(tapply(y, SummarizedExperiment_Subset_noBad$treatment, sd))!=0))
+head(GenesToFilter)
+
+#How many genes we'll end up keeping
+sum(GenesToFilter)
+#[1] 15569
+### there were no genes with zero variability so we have the same number as before running this.
+
+SummarizedExperiment_Subset_noBad_Filtered<-SummarizedExperiment_Subset_noBad[GenesToFilter,]
+SummarizedExperiment_Subset_noBad_Filtered
+#class: SummarizedExperiment 
+#dim: 15569 36
+
+#And again, remaking the expression set (double check... dimensions should be different if we had removed genes):
+ExpressionData_Subset_noBad_Filtered<-assay(SummarizedExperiment_Subset_noBad_Filtered)
+str(ExpressionData_Subset_noBad_Filtered)
+#num [1:15569, 1:36] -0.743 1.135 4.13 1.578 -0.221 ...
+
+###########################
+
+#Checking for batch confound:
+#Since we are down to the subset of samples that we plan to use, this would be a good time to check for confounds
+#Unfortunately, processing batches are often unbalanced in regards to variables of interest
+#For this dataset, Gemma has all of the processing batch information lumped into one variable
+
+table(SummarizedExperiment_Subset_noBad_Filtered$block)
+#Batch_02_23/09/10 
+#36
+### This did not create a table so I'm confused lol (8.31.23, this is just because everything is in one batch)
+#this function breaks apart these "blocks" into specific batch-related variables: <-- SKIP This line for my dataset since I didn't have different blocks
+###strsplit(SummarizedExperiment_Subset_noBad_Filtered$block,)
+
+###########################RNASeqCODE DOESN"T APPLY TO MICROARRAY DATA 
+#To make that into an easier-to-use data.frame <-- also not relevant for this datset EIF
+###BatchVariables<-do.call(rbind.data.frame, SummarizedExperiment_Subset_noBad_Filtered$block) 
+###str(BatchVariables)
+#Not relevant for microarray only RNAseq
+#####colnames(BatchVariables)<-c("Device", "Run", "FlowCell", "Lane")
+
+#table(SummarizedExperiment_Subset_noBad_Filtered$treatment, BatchVariables$c..Batch_02_23.09.10....Batch_02_23.09.10....Batch_02_23.09.10...)
+#                                    Batch_02_23/09/10
+#reference subject role                17
+#social stress (SS)                    19
+
+
+#### SKIP The rest of this section
+#table(SummarizedExperiment_Subset_noBad_Filtered$treatment, BatchVariables$Run) 
+#                                   Run=158 Run=206 Run=345 Run=59
+# imipramine                            1       2       0      4
+# ketamine                              1       1       0      4
+# reference substance role,saline       0       1       1      1
+
+#Looks like run and device may be redundant
+#table(BatchVariables$Device, BatchVariables$Run)
+#                     Run=158 Run=206 Run=345 Run=59
+# Device=11V6WR1          0       4       0      0
+# Device=HWI-D00147       0       0       0      9
+# Device=HWI-ST1147       2       0       0      0
+# Device=HWI-ST276        0       0       1      0
+
+#table(SummarizedExperiment_Subset_noBad_Filtered$treatment, BatchVariables$FlowCell)
+#Looks also potentially redundant
+
+#table(BatchVariables$FlowCell, BatchVariables$Run)
+#                       Run=158 Run=206 Run=345 Run=59
+# Flowcell=C2GWMACXX       0       0       0      9
+# Flowcell=C34A7ACXX       2       0       0      0
+# Flowcell=C3H70ACXX       0       0       1      0
+# Flowcell=C3HBLACXX       0       4       0      0
+#yep
+
+#RNASeqCODE table(SummarizedExperiment_Subset_noBad_Filtered$treatment, BatchVariables$Lane)
+#                                   Lane=1 Lane=2 Lane=3 Lane=4 Lane=5 Lane=6 Lane=7 Lane=8
+# imipramine                           1      1      1      1      0      1      1      1
+# ketamine                             0      1      2      1      1      0      1      0
+# reference substance role,saline      1      1      1      0      0      0      0      0
+
+#Too many Lanes to take into consideration
+
+
+########################### END OF RNASeq-ONLY CODE
+
+#Principal components analysis:
+#Let's see what the largest sources of variation are in the dataset
+#We are particularly interested in determining which variables we should include as co-variates in our model
+#E.g., if a technical variable (e.g., batch) is the main source of variation in the data, we should probably control for it
+
+library(stats)
+pca_output<-prcomp(t(ExpressionData_Subset_noBad_Filtered), scale=TRUE)
+
+PCeigenvectors<-pca_output$rotation[ ,c(1:4)]
+PCeigenvectors2<-cbind(PCeigenvectors, rowData(SummarizedExperiment_Subset_noBad_Filtered))
+write.csv(PCeigenvectors2, "PCeigenvectors.csv")
+
+PC1<-pca_output$x[,1]
+PC2<-pca_output$x[,2]
+PC3<-pca_output$x[,3]
+PC4<-pca_output$x[,4]
+
+#Output a scree plot for the PCA (no outliers):
+#This plot illustrates the proportion of variance explained by each principal component (PC):
+png("10 PCA Scree Plot1.png")
+plot(summary(pca_output)$importance[2,]~(c(1:length(summary(pca_output)$importance[2,]))), main="Variance Explained by Each Principal Component", xlab="PC #", ylab="Proportion of Variance Explained", col=2)
+dev.off()
+
+#Output <-- SHOWS UP IN THE FOLDER I ASSIGNED a scatterplot illustrating the relationship between Principal components 1 & 2 (PC1 & PC2):
+png("10 PC1 vs PC2.png")
+plot(PC1~PC2, main="Principal Components Analysis")
+dev.off()
+
+#You can color these plots in using different variables in the dataset 
+#This can help explain the main sources of variation in the data
+#Technical variables (brain region, batch) tend to be the main culprits
+#plot(PC1~PC2, main="Principal Components Analysis", col=as.factor(BatchVariables$Run))
+#PC1 and 2, don't seem to be related to our main batch variable <-- this is empty for me because I don't have "run" as a variable
+
+plot(PC1~PC2, main="Principal Components Analysis", col=as.factor(SummarizedExperiment_Subset_noBad_Filtered$treatment))
+#Here we see PC1 and PC2 for treatment (stress vs. non stress).  Not nearly the bunching we'd hope if there was an effect of treatment.
+
+plot(PC3~PC4, main="Principal Components Analysis", col=as.factor(SummarizedExperiment_Subset_noBad_Filtered$treatment))
+#Another dimension of the data????
+
+plot(PC1~PC2, main="Principal Components Analysis", col=as.factor(SummarizedExperiment_Subset_noBad_Filtered$timepoint))
+#Also doesn't seem to be much of a grouping based on timepoints
+
+plot(PC3~PC4, main="Principal Components Analysis", col=as.factor(SummarizedExperiment_Subset_noBad_Filtered$timepoint))
+#Another dimension of the data???  That PC1/PC2 didn't show clustering of variables of interest, that suggests something else is responsible for more variability in the dataset than our variables of interest.
+
+#If we want to zoom in on the relationship between PC1 and treatment we can make a boxplot
+boxplot(PC1~SummarizedExperiment_Subset_noBad_Filtered$treatment, las=2, xlab="")
+boxplot(PC4~SummarizedExperiment_Subset_noBad_Filtered$treatment, las=2, xlab="")
+#Shows substantial overlap between nonstress and socialstressgroups.  Lots of variability in SS group... resilient vs. susceptible???
+##PC4 seems more interesting than PC1
+
+#If we want to zoom in on the relationship between PC1 and time point we can make a boxplot (is there a way to show both variables of interest, stress and timepoint on the same plot?)
+boxplot(PC1~SummarizedExperiment_Subset_noBad_Filtered$timepoint, las=2, xlab="")
+boxplot(PC2~SummarizedExperiment_Subset_noBad_Filtered$timepoint, las=2, xlab="")
+boxplot(PC1~SummarizedExperiment_Subset_noBad_Filtered$timepoint, las=2, xlab="")
+
+#####################Updating variables so it makes sense
+table(SummarizedExperiment_Subset_noBad_Filtered$timepoint)
+SummarizedExperiment_Subset_noBad_Filtered$StressDuration<- SummarizedExperiment_Subset_noBad_Filtered$timepoint
+SummarizedExperiment_Subset_noBad_Filtered$StressDuration[SummarizedExperiment_Subset_noBad_Filtered$timepoint=="1.5 weeks,5 days"] <-5
+#### Replaces "1.5 weeks, 5 days" with "5" as the value for stress duration
+
+SummarizedExperiment_Subset_noBad_Filtered$StressDuration[SummarizedExperiment_Subset_noBad_Filtered$timepoint=="24 hours,5 days"] <-5
+### Adds this to the other set of mice that experienced 5 days of stress
+
+SummarizedExperiment_Subset_noBad_Filtered$StressDuration[SummarizedExperiment_Subset_noBad_Filtered$timepoint=="24 hours,10 days"] <-10
+SummarizedExperiment_Subset_noBad_Filtered$StressDuration[SummarizedExperiment_Subset_noBad_Filtered$timepoint=="6 weeks,10 days"] <-10
+
+SummarizedExperiment_Subset_noBad_Filtered$DelayToSample<- SummarizedExperiment_Subset_noBad_Filtered$timepoint
+SummarizedExperiment_Subset_noBad_Filtered$DelayToSample[SummarizedExperiment_Subset_noBad_Filtered$timepoint=="24 hours,10 days"] <-1
+SummarizedExperiment_Subset_noBad_Filtered$DelayToSample[SummarizedExperiment_Subset_noBad_Filtered$timepoint=="24 hours,5 days"] <-1
+SummarizedExperiment_Subset_noBad_Filtered$DelayToSample[SummarizedExperiment_Subset_noBad_Filtered$timepoint=="1.5 weeks,5 days"] <-10
+SummarizedExperiment_Subset_noBad_Filtered$DelayToSample[SummarizedExperiment_Subset_noBad_Filtered$timepoint=="6 weeks,10 days"] <-42
+
+SummarizedExperiment_Subset_noBad_Filtered$DelayToSample_Numeric<-as.numeric(SummarizedExperiment_Subset_noBad_Filtered$DelayToSample) 
+
+table(SummarizedExperiment_Subset_noBad_Filtered$StressDuration)
+table(SummarizedExperiment_Subset_noBad_Filtered$DelayToSample)
+table(SummarizedExperiment_Subset_noBad_Filtered$DelayToSample_Numeric)
+
+### Set reference level for stress duration
+levels(SummarizedExperiment_Subset_noBad_Filtered$StressDuration)
+### oops, need to force it to be a factor
+SummarizedExperiment_Subset_noBad_Filtered$StressDuration_Factor<- as.factor(SummarizedExperiment_Subset_noBad_Filtered$StressDuration)
+levels(SummarizedExperiment_Subset_noBad_Filtered$StressDuration_Factor)
+## rn it has 10 as the reference factor, we want to change it to 5
+
+SummarizedExperiment_Subset_noBad_Filtered$StressDuration_Factor <- relevel(SummarizedExperiment_Subset_noBad_Filtered$StressDuration_Factor, ref="5")
+levels(SummarizedExperiment_Subset_noBad_Filtered$StressDuration_Factor)
+
+## for delay to sample the intercept will be set to zero, would be easier if intercept was within the dataset.  
+###Maybe subtract one from each value so intercept zero is the same as the 24hr timepoint (set intercept as 24 hours aka 1 day)
+SummarizedExperiment_Subset_noBad_Filtered$DelayToSample_Numeric<-SummarizedExperiment_Subset_noBad_Filtered$DelayToSample_Numeric-1
+
+
+#If we want to zoom in on the relationship between PC1 and time point we can make a boxplot (is there a way to show both variables of interest, stress and timepoint on the same plot?)
+boxplot(PC1~SummarizedExperiment_Subset_noBad_Filtered$StressDuration_Factor, las=2, xlab="")
+### PC1 could be stress duration?  "looks relatively convincing" per MH 8.31.23
+
+boxplot(PC1~SummarizedExperiment_Subset_noBad_Filtered$DelayToSample_Numeric, las=2, xlab="")
+boxplot(PC2~SummarizedExperiment_Subset_noBad_Filtered$DelayToSample_Numeric, las=2, xlab="")
+boxplot(PC3~SummarizedExperiment_Subset_noBad_Filtered$DelayToSample_Numeric, las=2, xlab="")
+boxplot(PC4~SummarizedExperiment_Subset_noBad_Filtered$DelayToSample_Numeric, las=2, xlab="")
+
+##########################
+
+summary.lm(lm(PC1~SummarizedExperiment_Subset_noBad_Filtered$treatment+SummarizedExperiment_Subset_noBad_Filtered$StressDuration_Factor+SummarizedExperiment_Subset_noBad_Filtered$DelayToSample_Numeric+SummarizedExperiment_Subset_noBad_Filtered$treatment*SummarizedExperiment_Subset_noBad_Filtered$StressDuration_Factor+SummarizedExperiment_Subset_noBad_Filtered$treatment*SummarizedExperiment_Subset_noBad_Filtered$DelayToSample_Numeric))
+SummarizedExperiment_Subset_noBad_Filtered$PC1<-PC1
+summary.lm(lm(PC1~treatment+StressDuration_Factor+DelayToSample_Numeric+treatment*StressDuration_Factor+treatment*DelayToSample_Numeric, data=SummarizedExperiment_Subset_noBad_Filtered))
+
+str(SummarizedExperiment_Subset_noBad_Filtered)
+#  .. .. .. ..$ organism part        : chr [1:36] "blood" "blood" "blood" "blood" ...
+#.. .. .. ..$ block                : chr [1:36] "Batch_02_23/09/10" "Batch_02_23/09/10" "Batch_02_23/09/10" "Batch_02_23/09/10" ...
+#.. .. .. ..$ treatment            : chr [1:36] "social stress (SS)" "reference subject role" "social stress (SS)" "reference subject role" ...
+#.. .. .. ..$ timepoint            : chr [1:36] "24 hours,5 days" "24 hours,5 days" "1.5 weeks,5 days" "24 hours,5 days" ...
+#.. .. .. ..$ StressDuration       : chr [1:36] "5" "5" "5" "5" ...
+#.. .. .. ..$ DelayToSample        : chr [1:36] "1" "1" "10" "1" ...
+#.. .. .. ..$ DelayToSample_Numeric: num [1:36] 0 0 9 0 9 41 0 41 0 0 ...
+#.. .. .. ..$ StressDuration_Factor: Factor w/ 2 levels "5","10": 1 1 1 1 1 2 2 2 2 1 ...
+#.. .. .. ..$ PC1                  : Named num [1:36] -27.86 15.32 -48.26 2.62 -27.01 ...
+#MH thinks we need to update treatment to be a factor rather than its current status as character.  Myabe will solve the problem.
+
+###Ran into problems with this variable, going to change the name of hte refrence subject role for stress so it's not so sloppy in boxplot.
+
+SummarizedExperiment_Subset_noBad_Filtered$treatment[SummarizedExperiment_Subset_noBad_Filtered$treatment=="reference subject role"]<-"control"
+
+SummarizedExperiment_Subset_noBad_Filtered$treatment_factor <-as.factor(SummarizedExperiment_Subset_noBad_Filtered$treatment)
+levels(SummarizedExperiment_Subset_noBad_Filtered$treatment_factor)
+### Reference level is correct :) [1] "reference subject role" "social stress (SS)"   
+
+summary.lm(lm(PC1~treatment_factor+StressDuration_Factor+DelayToSample_Numeric+treatment_factor*StressDuration_Factor+treatment_factor*DelayToSample_Numeric, data=SummarizedExperiment_Subset_noBad_Filtered))
+### maybe unhappy that we're using a summarized experiment object? since line 472 did work.
+
+summary.lm(lm(PC1~SummarizedExperiment_Subset_noBad_Filtered$treatment_factor+SummarizedExperiment_Subset_noBad_Filtered$StressDuration_Factor+SummarizedExperiment_Subset_noBad_Filtered$DelayToSample_Numeric+SummarizedExperiment_Subset_noBad_Filtered$treatment_factor*SummarizedExperiment_Subset_noBad_Filtered$StressDuration_Factor+SummarizedExperiment_Subset_noBad_Filtered$treatment_factor*SummarizedExperiment_Subset_noBad_Filtered$DelayToSample_Numeric))
+# Call:
+#   lm(formula = PC1 ~ SummarizedExperiment_Subset_noBad_Filtered$treatment_factor + 
+#        SummarizedExperiment_Subset_noBad_Filtered$StressDuration_Factor + 
+#        SummarizedExperiment_Subset_noBad_Filtered$DelayToSample_Numeric + 
+#        SummarizedExperiment_Subset_noBad_Filtered$treatment_factor * 
+#        SummarizedExperiment_Subset_noBad_Filtered$StressDuration_Factor + 
+#        SummarizedExperiment_Subset_noBad_Filtered$treatment_factor * 
+#        SummarizedExperiment_Subset_noBad_Filtered$DelayToSample_Numeric)
+# 
+# Residuals:
+#   Min       1Q   Median       3Q      Max 
+# -134.322  -29.772    4.671   24.259   92.525 
+# 
+# Coefficients:
+#   Estimate Std. Error t value Pr(>|t|)  
+# (Intercept)                                                                                                                                       21.83734   15.85980   1.377   0.1787  
+# SummarizedExperiment_Subset_noBad_Filtered$treatment_factorsocial stress (SS)                                                                    -11.40429   22.35411  -0.510   0.6137  
+# SummarizedExperiment_Subset_noBad_Filtered$StressDuration_Factor10                                                                               -59.08289   29.11066  -2.030   0.0513 .
+# SummarizedExperiment_Subset_noBad_Filtered$DelayToSample_Numeric                                                                                   0.08445    0.87482   0.097   0.9237  
+# SummarizedExperiment_Subset_noBad_Filtered$treatment_factorsocial stress (SS):SummarizedExperiment_Subset_noBad_Filtered$StressDuration_Factor10  64.53421   38.19149   1.690   0.1014  
+# SummarizedExperiment_Subset_noBad_Filtered$treatment_factorsocial stress (SS):SummarizedExperiment_Subset_noBad_Filtered$DelayToSample_Numeric    -1.14949    1.16819  -0.984   0.3330  
+# ---
+#   Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+# 
+# Residual standard error: 48.58 on 30 degrees of freedom
+# Multiple R-squared:  0.2077,	Adjusted R-squared:  0.07563 
+# F-statistic: 1.573 on 5 and 30 DF,  p-value: 0.1979
+
+GSE68076 <- SummarizedExperiment_Subset_noBad_Filtered 
+###Updated to the name of the Gemma code
+
+summary.lm(lm(PC4~GSE68076$treatment_factor+GSE68076$StressDuration_Factor+GSE68076$DelayToSample_Numeric+GSE68076$treatment_factor*GSE68076$StressDuration_Factor+GSE68076$treatment_factor*GSE68076$DelayToSample_Numeric))
+###PC4 looks like we have variation related to variables of interest for Stress and StressDuration
+# (Intercept)                                                                   34.61460    7.56797   4.574 7.74e-05 ***
+#   GSE68076$treatment_factorsocial stress (SS)                                  -56.66558   10.66692  -5.312 9.64e-06 ***
+#   GSE68076$StressDuration_Factor10                                             -50.60786   13.89101  -3.643  0.00101 ** 
+#   GSE68076$DelayToSample_Numeric                                                 0.09336    0.41744   0.224  0.82456    
+# GSE68076$treatment_factorsocial stress (SS):GSE68076$StressDuration_Factor10  47.86714   18.22420   2.627  0.01345 *  
+#   GSE68076$treatment_factorsocial stress (SS):GSE68076$DelayToSample_Numeric     0.81540    0.55744   1.463  0.15393  
+
+boxplot(PC4~GSE68076$StressDuration_Factor*GSE68076$DelayToSample_Numeric*GSE68076$treatment_factor)
+levels(GSE68076$treatment_factor)
+
+#######We changed the name earlier in the code instead of doing this.
+# GSE68076$treatment_factor[GSE68076$treatment_factor=="reference subject role"]<-"no stress"
+# # Warning message:
+# #   In `[<-.factor`(`*tmp*`, GSE68076$treatment_factor == "reference subject role",  :
+# #                     invalid factor level, NA generated
+# #### looks like it didn't like "no stress" and instead changed it all to <NA>
+# 
+# GSE68076$treatment_factor[is.na(GSE68076$treatment_factor)]<-"control"
+# ##################### <-- SKIP THIS SECTION?
+# #An example:
+# #Plotting data for a particular gene 
+# #and running a differential expression analysis for just that gene:
+
+#Getting the expression data for a particular gene (Xist specific to females; Ddx3y specific to males):
+Xist<-assay(SummarizedExperiment_Subset_noBad_Filtered)[rowData(SummarizedExperiment_Subset_noBad_Filtered)$GeneSymbol=="Xist",]
+Ddx3y<-assay(SummarizedExperiment_Subset_noBad_Filtered)[rowData(SummarizedExperiment_Subset_noBad_Filtered)$GeneSymbol=="Ddx3y",]
+plot(Ddx3y~Xist)
+###### results suggest that these are all male mice
+
+
+#Plotting a boxplot of the expression of Pvalb Log2 CPM across groups:
+boxplot(Pvalb~SummarizedExperiment_Subset_noBad_Filtered$treatment, xlab="", ylab="Log2 CPM", main="Pvalb", las=2)
+
+####################9.5.23 Resume Here to make graphs prettier
+#We can add jittered data points to our graph so that we can see the values for the individual samples in each group.
+#To do this, we use the function stripchart and the exact same y~x formula that we used for the boxplot
+#The parameter pch determines the size of the data points.
+#The parameter "add" places the points on top of the boxplot that we already created.
+boxplot(PC4~GSE68076$StressDuration_Factor*GSE68076$DelayToSample_Numeric*GSE68076$treatment_factor, xlab="Treatment and Time Period", main="GSE68076", col=2)
+stripchart(PC4~GSE68076$StressDuration_Factor*GSE68076$DelayToSample_Numeric*GSE68076$treatment_factor, pch = 19, method = "jitter", jitter = 0.2, vertical = TRUE, add=TRUE)
+
+
+#################Example from different RNAseq data
+#It looks like antidepressant treatment might decrease PVALB
+#We would need to run inferential statistics to learn whether this effect is significant
+#If we were looking at the data from a single gene, and our data was truly numeric (which RNA-Seq is not quite...)
+#We could run a simple linear regression
+#First we would set up our categorical variables as factors:
+SummarizedExperiment_Subset_noBad_Filtered$treatment_factor<-as.factor(SummarizedExperiment_Subset_noBad_Filtered$treatment)
+levels(SummarizedExperiment_Subset_noBad_Filtered$treatment_factor)
+#[1] "imipramine" "ketamine"   "saline" 
+#We want saline to be our control (reference) group:
+SummarizedExperiment_Subset_noBad_Filtered$treatment_factor<-relevel(SummarizedExperiment_Subset_noBad_Filtered$treatment_factor, ref="reference substance role,saline")
+levels(SummarizedExperiment_Subset_noBad_Filtered$treatment_factor)
+#And then we could run a linear regression:
+summary.lm(lm(Pvalb~SummarizedExperiment_Subset_noBad_Filtered$treatment_factor))
+
+
+###################### <-- EIF resume here
+#Now: Running a differential expression analysis for an entire dataset:
+#Making a design matrix:
+
+table(SummarizedExperiment_Subset_noBad_Filtered$treatment)
+#reference subject role     social stress (SS) 
+#         17                     19 
+
+
+table(SummarizedExperiment_Subset_noBad_Filtered$timepoint)
+#(1.5 weeks,5 days) (24 hours,10 days)  (24 hours,5 days)  (6 weeks,10 days) 
+#        10                8                10                8 
+
+str(SummarizedExperiment_Subset_noBad_Filtered$treatment)
+#chr [1:36] "social stress (SS)" "reference subject role" "social stress (SS)" "reference subject role" "social stress (SS)" "reference subject role" ...
+#currently a character vector
+
+#Converting our (categorical) variable of interest to a factor
+SummarizedExperiment_Subset_noBad_Filtered$treatment_factor<-as.factor(SummarizedExperiment_Subset_noBad_Filtered$treatment)
+levels(SummarizedExperiment_Subset_noBad_Filtered$treatment_factor)
+#[1] "reference subject role" "social stress (SS)"
+
+#And then setting the reference level to something that makes sense:
+SummarizedExperiment_Subset_noBad_Filtered$treatment_factor<-relevel(SummarizedExperiment_Subset_noBad_Filtered$treatment_factor, ref="reference subject role")
+levels(SummarizedExperiment_Subset_noBad_Filtered$treatment_factor)
+#[1] "reference subject role" "social stress (SS)" 
+
+library(limma)
+### Well, shoot Warning in install.packages :package ‘limma’ is not available for this version of R
+### A version of this package for your version of R might be available elsewhere,
+### There may be some specific way to get this (ask Megan) <--- STOPPED HERE 7.28.23 (it's stored somewhere other than crayon i know it's not really crayon)
+#########UPDATE 9.5.23, limma is from bioconductor (not just generic code, code repository more relevant to bioinformatics), 
+#########so we googled "limma" and then copied and pasted code from that website.  Google = good
+
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+
+BiocManager::install("limma")
+
+library(limma)
+###loads it into my workspace. Limma = body code for analyzing transcriptional profiling data; workflow, limma manual would be a good resource!
+####see google drive space on brain data alchemy for more info on limma on what it does for differential expression etc.
+#### we'll use it to create a design matrix to run our linear model similar to what we just did, all the data organization we did previously will
+####make it easier now.  Once we set up design matrix we can use it on expression data)
+
+str(colData(GSE68076))
+### Identifies "block" as batch
+
+~GSE68076$treatment_factor+GSE68076$StressDuration_Factor+GSE68076$DelayToSample_Numeric+GSE68076$treatment_factor*GSE68076$StressDuration_Factor+GSE68076$treatment_factor*GSE68076$DelayToSample_Numeric
+
+
+
+table(SummarizedExperiment_Subset_noBad_Filtered$block,SummarizedExperiment_Subset_noBad_Filtered$treatment)
+### This shows only one batch; still presumably were batches in data collection...
+
+#You can add co-variates to the design matrix using an addition symbol, e.g. ~treatment_factor+block
+design <- model.matrix(~GSE68076$treatment_factor+GSE68076$StressDuration_Factor+GSE68076$DelayToSample_Numeric+GSE68076$treatment_factor*GSE68076$StressDuration_Factor+GSE68076$treatment_factor*GSE68076$DelayToSample_Numeric
+, data=colData(GSE68076))
+design
+> design <- model.matrix(~GSE68076$treatment_factor+GSE68076$StressDuration_Factor+GSE68076$DelayToSample_Numeric+GSE68076$treatment_factor*GSE68076$StressDuration_Factor+GSE68076$treatment_factor*GSE68076$DelayToSample_Numeric
+                         + , data=colData(GSE68076))
+> design
+# (Intercept) GSE68076$treatment_factorsocial stress (SS) GSE68076$StressDuration_Factor10 GSE68076$DelayToSample_Numeric
+# SS_blood_5d_24h_rep5            1                                           1                                0                              0
+# C_blood_5d_24h_rep2             1                                           0                                0                              0
+# SS_blood_5d_1.5w_rep1           1                                           1                                0                              9
+# C_blood_5d_24h_rep3             1                                           0                                0                              0
+# SS_blood_5d_1.5w_rep2           1                                           1                                0                              9
+# C_blood_10d_6w_rep3             1                                           0                                1                             41
+# SS_blood_10d_24h_rep3           1                                           1                                1                              0
+# C_blood_10d_6w_rep4             1                                           0                                1                             41
+# SS_blood_10d_24h_rep4           1                                           1                                1                              0
+# C_blood_5d_24h_rep4             1                                           0                                0                              0
+# SS_blood_5d_1.5w_rep3           1                                           1                                0                              9
+# C_blood_5d_24h_rep5             1                                           0                                0                              0
+# C_blood_5d_1.5w_rep1            1                                           0                                0                              9
+# SS_blood_10d_24h_rep5           1                                           1                                1                              0
+# SS_blood_5d_1.5w_rep4           1                                           1                                0                              9
+# C_blood_5d_1.5w_rep2            1                                           0                                0                              9
+# SS_blood_5d_1.5w_rep5           1                                           1                                0                              9
+# SS_blood_10d_6w_rep1            1                                           1                                1                             41
+# C_blood_10d_24h_rep2            1                                           0                                1                              0
+# C_blood_5d_1.5w_rep3            1                                           0                                0                              9
+# SS_blood_5d_24h_rep1            1                                           1                                0                              0
+# C_blood_10d_24h_rep3            1                                           0                                1                              0
+# SS_blood_5d_24h_rep2            1                                           1                                0                              0
+# C_blood_5d_1.5w_rep4            1                                           0                                0                              9
+# SS_blood_10d_6w_rep3            1                                           1                                1                             41
+# C_blood_5d_1.5w_rep5            1                                           0                                0                              9
+# SS_blood_10d_6w_rep4            1                                           1                                1                             41
+# C_blood_10d_24h_rep4            1                                           0                                1                              0
+# SS_blood_5d_24h_rep3            1                                           1                                0                              0
+# C_blood_10d_6w_rep1             1                                           0                                1                             41
+# SS_blood_10d_24h_rep1           1                                           1                                1                              0
+# SS_blood_10d_6w_rep5            1                                           1                                1                             41
+# C_blood_5d_24h_rep1             1                                           0                                0                              0
+# SS_blood_5d_24h_rep4            1                                           1                                0                              0
+# SS_blood_10d_24h_rep2           1                                           1                                1                              0
+# C_blood_10d_6w_rep2             1                                           0                                1                             41
+# GSE68076$treatment_factorsocial stress (SS):GSE68076$StressDuration_Factor10 GSE68076$treatment_factorsocial stress (SS):GSE68076$DelayToSample_Numeric
+# SS_blood_5d_24h_rep5                                                                             0                                                                          0
+# C_blood_5d_24h_rep2                                                                              0                                                                          0
+# SS_blood_5d_1.5w_rep1                                                                            0                                                                          9
+# C_blood_5d_24h_rep3                                                                              0                                                                          0
+# SS_blood_5d_1.5w_rep2                                                                            0                                                                          9
+# C_blood_10d_6w_rep3                                                                              0                                                                          0
+# SS_blood_10d_24h_rep3                                                                            1                                                                          0
+# C_blood_10d_6w_rep4                                                                              0                                                                          0
+# SS_blood_10d_24h_rep4                                                                            1                                                                          0
+# C_blood_5d_24h_rep4                                                                              0                                                                          0
+# SS_blood_5d_1.5w_rep3                                                                            0                                                                          9
+# C_blood_5d_24h_rep5                                                                              0                                                                          0
+# C_blood_5d_1.5w_rep1                                                                             0                                                                          0
+# SS_blood_10d_24h_rep5                                                                            1                                                                          0
+# SS_blood_5d_1.5w_rep4                                                                            0                                                                          9
+# C_blood_5d_1.5w_rep2                                                                             0                                                                          0
+# SS_blood_5d_1.5w_rep5                                                                            0                                                                          9
+# SS_blood_10d_6w_rep1                                                                             1                                                                         41
+# C_blood_10d_24h_rep2                                                                             0                                                                          0
+# C_blood_5d_1.5w_rep3                                                                             0                                                                          0
+# SS_blood_5d_24h_rep1                                                                             0                                                                          0
+# C_blood_10d_24h_rep3                                                                             0                                                                          0
+# SS_blood_5d_24h_rep2                                                                             0                                                                          0
+# C_blood_5d_1.5w_rep4                                                                             0                                                                          0
+# SS_blood_10d_6w_rep3                                                                             1                                                                         41
+# C_blood_5d_1.5w_rep5                                                                             0                                                                          0
+# SS_blood_10d_6w_rep4                                                                             1                                                                         41
+# C_blood_10d_24h_rep4                                                                             0                                                                          0
+# SS_blood_5d_24h_rep3                                                                             0                                                                          0
+# C_blood_10d_6w_rep1                                                                              0                                                                          0
+# SS_blood_10d_24h_rep1                                                                            1                                                                          0
+# SS_blood_10d_6w_rep5                                                                             1                                                                         41
+# C_blood_5d_24h_rep1                                                                              0                                                                          0
+# SS_blood_5d_24h_rep4                                                                             0                                                                          0
+# SS_blood_10d_24h_rep2                                                                            1                                                                          0
+# C_blood_10d_6w_rep2                                                                              0                                                                          0
+# attr(,"assign")
+# [1] 0 1 2 3 4 5
+# attr(,"contrasts")
+# attr(,"contrasts")$`GSE68076$treatment_factor`
+# [1] "contr.treatment"
+# 
+# attr(,"contrasts")$`GSE68076$StressDuration_Factor`
+# [1] "contr.treatment"
+
+
+######################SAMPLE CODE FROM MH
+# #You can add co-variates to the design matrix using an addition symbol, e.g. ~treatment_factor+ timepoint (If I want to use all time points)
+# design <- model.matrix(~treatment_factor + timepoint, data=colData(SummarizedExperiment_Subset_noBad_Filtered))
+# design
+# 
+# #testing it out with the data for 1 gene to make sure it doesn't crash: 
+# #we have to tell the lm function to not add an intercept
+# summary.lm(lm(ExpressionData_Subset_noBad_Filtered[1,]~0+design))
+
+###################### EIF resume here 9.5.23
+#Applying the model to all genes using limma:
+
+fit <- lmFit(ExpressionData_Subset_noBad_Filtered, design)
+
+#Adding an eBayes correction to help reduce the influence of outliers/small sample size on estimates
+efit <- eBayes(fit, trend=TRUE)
+
+dt<-decideTests(efit)
+summary(decideTests(efit))
+# (Intercept) GSE68076$treatment_factorsocial stress (SS) GSE68076$StressDuration_Factor10 GSE68076$DelayToSample_Numeric GSE68076$treatment_factorsocial stress (SS):GSE68076$StressDuration_Factor10
+# Down          5243                                           9                               12                              0                                                                            0
+# NotSig        3343                                       15533                            15546                          15569                                                                        15569
+# Up            6983                                          27                               11                              0                                                                            0
+# GSE68076$treatment_factorsocial stress (SS):GSE68076$DelayToSample_Numeric
+# Down                                                                            0
+# NotSig                                                                      15569
+# Up                                                                              0
+
+str(efit)
+######## THis is just in case you want to know what the structure of hte data are
+
+
+#Writing out the results into your working directory:
+write.fit(efit, adjust="BH", file="Limma_results.txt")
+write.csv(rowData(SummarizedExperiment_Subset_noBad_Filtered), "Annotation_LimmaResults.csv")
