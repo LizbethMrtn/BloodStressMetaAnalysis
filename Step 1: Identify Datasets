@@ -1,0 +1,79 @@
+#Code for MetaData Extraction for Gemma Datasets
+#Topic: Blood markers of inflammation, chronic stress, psychiatric disorders
+#EIF01 June 29, 2023
+
+#####################
+https://github.com/PavlidisLab/gemma.R
+https://pavlidislab.github.io/gemma.R/articles/gemma.R.html
+
+#####################
+#Installing the Gemma API package:
+
+if(!requireNamespace("devtools", quietly=T)){
+  install.packages("devtools")
+}
+devtools:: install_github("PavlidisLab/gemma.R", force=T)
+
+#########################
+#Searching for datasets that have metadata that includes particular terms:
+SearchTerms<-"
+(Blood Chronic Stress) OR
+(White Blood Cell Chronic Stress) OR
+(Leukocyte* Chronic Stress) OR
+(PBMC Chronic Stress Cytokine*) OR
+(Peripheral Blood Mononucl* Chronic Stress Cytokine*) OR
+(Blood PTSD Cytokine*) OR
+(White Blood Cell PTSD Cytokine*) OR
+(Leukocyte* PTSD Cytokine*) OR
+(PBMC PTSD Cytokine*) OR
+(Peripheral Blood Mononucl* PTSD Cytokine*) OR
+(Blood Social Defeat Cytokine*) OR
+(White Blood Cell Social Defeat Cytokine*) OR
+(Leukocyte* Social Defeat Cytokine*) OR
+(PBMC Social Defeat Cytokine*) OR
+(Peripheral Blood Mononucl* Social Defeat Cytokine*) OR
+(Blood Chronic Stress Interleukin*) OR
+(White Blood Cell Chronic Stress Interleukin*) OR
+(Leukocyte* Chronic Stress Interleukin*) OR
+(PBMC Chronic Stress Interleukin*) OR
+(Peripheral Blood Mononucl* Chronic Stress Interleukin*) OR
+(Blood PTSD Interleukin*) OR
+(White Blood Cell PTSD Interleukin*) OR
+(Leukocyte* PTSD Interleukin*) OR
+(PBMC PTSD Interleukin*) OR
+(Peripheral Blood Mononucleal Cells PTSD Interleukin*) OR
+(Blood Social Defeat Interleukin*) OR
+(White Blood Cell Social Defeat Interleukin*) OR
+(Leukocyte* Social Defeat Interleukin*) OR
+(PBMC Social Defeat Interleukin*) OR
+(Peripheral Blood Mononucl* Social Defeat Interleukin*) OR
+(Blood Chronic Stress Interleukin*) OR
+(White Blood Cell Chronic Stress Interleukin*) OR
+(Leukocyte* Chronic Stress Interleukin*) OR
+(PBMC Chronic Stress Interleukin*) OR
+(Peripheral Blood Mononucl* Chronic Stress Interleukin*) OR
+(Blood PTSD Inflam*) OR
+(White Blood Cell PTSD Inflam*) OR
+(Leukocyte* PTSD Inflam*) OR
+(PBMC PTSD Inflam*) OR
+(Peripheral Blood Mononucl* PTSD Inflam*) OR
+(Blood Social Defeat) OR
+(White Blood Cell Social Defeat) OR
+(Leukocyte* Social Defeat) OR
+(PBMC Social Defeat) OR
+(Peripheral Blood Mononucl* Social Defeat)
+"
+###################
+
+
+results_PBMC_Mice<-gemma.R ::search_datasets(SearchTerms, taxon = 'mouse',limit = 100) 
+#12 Observations
+results_PBMC_Rats<-gemma.R ::search_datasets(SearchTerms, taxon = 'rat',limit = 100) 
+#3 observations
+
+results_PBMC_Combined<-rbind.data.frame(results_PBMC_Mice, results_PBMC_Rats) 
+#15 observations
+results_PBMC_Combined_Unique<-unique(results_PBMC_Combined)
+#15 observations
+
+#From these, follow flow chart to identify relevant datasets that have blood transcriptome data in mice exposed to chronic stress
