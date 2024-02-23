@@ -128,7 +128,7 @@ ExtractingDEResults<-function(GSE_ID, TempResultsJoined_NoNA_NoMultimapped_FoldC
   rm(TempMasterResults, TempResultsJoined_NoNA_NoMultimapped_SV, TempResultsJoined_NoNA_NoMultimapped_SE, 
      TempResultsJoined_NoNA_NoMultimapped_FoldChanges, TempResultsJoined_NoNA_NoMultimapped_Tstats)
 } 
-### END OF FUNCTION; read in the whole thing
+### END OF FUNCTION
 
 
 #Use the extracting results function with the first dataset ============================DATA SET #1 ====================================================================
@@ -162,8 +162,7 @@ str(DEResults_GSE68076)
 # .. ..$ : chr [1:15568] "69674" "17427" "171232" "258373" ...
 # .. ..$ : chr "GSE68076_SSvsNS"
 
-#Sanity Check:
-#Calculating the SE from the Log2FC and Tstat for the first gene(row)
+#Sanity Check: Calculating the SE from the Log2FC and Tstat for the first gene(row)
 # Log2FC/Tstat = SE pull numbers from the str output above.  THe first part is the Log2FC values, the second part is the Tstat, 
 ####  and then see if Log2FC / Tstat for a given example matches with the SE value listed in the chart.
 0.5412/1.7194
