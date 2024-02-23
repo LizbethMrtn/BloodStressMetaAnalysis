@@ -1,75 +1,28 @@
-#Example code: Exploring a Dataset (with more detail)
-#Megan Hagenauer July 13, 2023
-#Flandreau Datset GSE68076 7.28.23 with Toni and Anne Support
+#Exploring a Dataset
+#July 13, 2023; 9/5/23; revised 2.23.24
+#Datset GSE68076
 
 ##################################
+#This code document is set up to provide an example of analyzing a single Gemma dataset "summarized experiment"
 
-#This code document is set up to provide an example of analyzing a single Gemma dataset
-#It combines many elements that we've already talked about.
-#To keep things neat and tidy, I'm only analyzing one dataset in this document & workspace
-
-#Example Dataset:
-#GSE81672 is an RNA-Seq experiment examining the effects of antidepressants in stressed mice.
-#... but I cut out all of the RNA-Seq specific code to make this version simpler for application to microarray
-
-##################################
-
-#Setting the working directory
-setwd("/Users/flandree/Documents/2023 2024 Sabbatical/01 UMich Project BrainAlchemy/Flandreau UM Data/7.28.23")
-
-##################################
-
-#I was previously demonstrating analyses using just the expression data
-
-#Gemma also has the ability to import some larger objects that include sample and gene/probe metadata
-#These objects are called Summarized Experiments and Expression Sets
-#Gemma recommends using Summarized Experiments, and peeking at these objects they definitely contain more info
-#... but I hadn't worked with them before, so I had to read a little about them:
 https://bioconductor.org/packages/release/bioc/manuals/SummarizedExperiment/man/SummarizedExperiment.pdf
 https://bioconductor.org/packages/release/bioc/vignettes/SummarizedExperiment/inst/doc/SummarizedExperiment.html
-
-#One of the benefits of these two objects is that they also allow us to read in the filtered expression data
-#Gemma applies a standardized filter across all platforms (RNA-Seq/microarray) to remove genes with minimal variance
-#These genes are likely to suffer from severe floor effects (very low expression/unmeasurable)
-#Or not actually be expressed at all and the measurements that we have are just noise.
-
-#I heard back from Paul about the actual cut offs that they use:
-#"There are two stages to our variance filter. 
-# First is just to remove genes with zero variance. 
-# The second is to remove genes that have too many identical values (within a small tolerance), 
-# where "too many" is currently defined as <70% distinct values, but we have tweaked this over time (slightly - we're never perfectly happy with anything)."
-#I call this a variance filter as a shorthand, of course it's not that exactly.
-#But the latter filter was originally intended to address cases where microarray data had been clipped by the submitter.
-#But it also has the effect of removing RNA-seq data that has very low counts (like, 1 count in a couple of samples).
-#It's quite permissive - it filters out data that causes problems for the analysis, but otherwise lets it go.
-#We used to have an expression level filter but we got rid of it long ago as being too contentious."
-
-#I am satisfied by this answer. 
-#Excluding low level expressed genes within an individual dataset reduces false positives due to noise within low-variance data
-#It also decreases the severity of the multiple comparisons correction (because there are fewer genes in the dataset)
-#Within a meta-analysis, we do not need to worry about effects caused by noise in individual datasets quite as much
-#So I would prefer to err on the side of including as many genes as possible.
-#So Paul's liberal filter to only toss out genes that are likely to cause problems with existing algorithms sounds good.
-
-#Instructions for function 
-gemma.R::get_dataset_object
-https://rdrr.io/github/PavlidisLab/Gemma-API/man/get_dataset_object.html
-#looks like we want to add filter=TRUE to use Gemma's filtered results (dropping genes with low variability)
-#looks like we can add consolidate="average" to consolidate the data for probes representing the same gene.
-#That won't matter as much for RNA-Seq data
-#E.g. it makes a small difference in this RNA-Seq dataset (~600 genes less in the consolidated version)
-#If we need to revert back to an RNA-Seq count matrix at some point, we may need to use the version with no consolidation
-
-#load useful code packages
 library(SummarizedExperiment)
 library(gemma.R)
 library(plyr)
 library(tidyr)
 
-#Input the summarized experiment object for your dataset: GSE68076 (FYI This takes a really long time and then shows up in the "data" area)
+###################################
+#Instructions for function 
+gemma.R::get_dataset_object
+https://rdrr.io/github/PavlidisLab/Gemma-API/man/get_dataset_object.html
+#Add filter=TRUE to use Gemma's filtered results (dropping genes with low variability)
+#Add consolidate="average" to consolidate the data for probes representing the same gene.
+
+
+#Input the summarized experiment object for your dataset: GSE68076
 SummarizedExperiment_Filtered<-gemma.R::get_dataset_object("GSE68076", type = 'se', filter=TRUE, consolidate="average")
 SummarizedExperiment_Filtered
-#Copied info from console
 ##$`18807`
 ##class: SummarizedExperiment 
 ##dim: 15569 116 
@@ -81,37 +34,21 @@ SummarizedExperiment_Filtered
 ##colnames(116): C_hemibrain_10d_6w_rep1 SS_blood_5d_24h_rep5 ... SS_spleen_10d_6w_rep2 C_blood_10d_6w_rep2
 ##colData names(5): factorValues organism part block treatment timepoint
 
-
 ExpressionData_Filtered<-assay(SummarizedExperiment_Filtered[[1]])
 str(ExpressionData_Filtered)
-#copied info from console
 ##num [1:15569, 1:116] -1.594 -2.599 -0.503 -0.715 0.635 ...
 
 hist(ExpressionData_Filtered)
-#Produces a histogram of expression data (frequency of what?  each gene?) <-- EIF read more about this (MH 8.31.23 Frequency = number of values
-# of expression data matrix.  Each row = gene or probe; different expression values for each probe / row.  Gemma does log 2 regression on datasets it
-# can access.  Some it can't access (agilent) then it uses "external data" values that aren't standardized because we don't know what the "external analyst"
-# did with the data before it got to Gemma.  That can result in massive differences in expression data OR a duplication in the log transformation, which
-# creates an artificially low level of variability, which is also bad.  The histogram helps tell us if we need to update the transformation to have the 'correct'
-# degree of variability.). EIF histogram -5 to +7 looks like log 2 transformed values (typical = -5 to +12; if i see a range from -1 to +2.5 it's probably
-# double log transformed.  If the range is 100s or 1000s it likely hasn't been log 2 transformed at all)
+#Produces a histogram of expression data 
 
 min(ExpressionData_Filtered)
-#[1] -11.54013 (MH 8.23 another way to judge range of values to determine if it's correctly log transformed.  The smallest value in an RNA seq dataset is
-## probably artificial so that they don't have to worry about zeros)
-#This is probably an artificial floor
-#A small positive value (e.g., 0.5) is often added to each datapoint before log transformation 
-#Because you can't log transform zeroes, e.g.: log2(0)
-#[1] -Inf
+#[1] -11.54013 
 
-#So this was the smallest value in the original dataset
 2^-11.54013
 #[1] 0.0003357954
-#Counts per million (not sure why we multiply by 30???? 8.23 This was for MH other dataset, probably unrelated to me since this is relevant to RNAseq)
-0.0003357954*30
-#0.01007386
 
-#Let's look at the mean vs. variance curve:
+
+#Look at the mean vs. variance curve:
 ExpressionData_Filtered_MeanPerGene<-apply(ExpressionData_Filtered, 1, mean)
 ExpressionData_Filtered_SDPerGene<-apply(ExpressionData_Filtered, 1, sd)
 
@@ -122,21 +59,13 @@ plot(ExpressionData_Filtered_SDPerGene~ExpressionData_Filtered_MeanPerGene)
 #How many genes have zero variance?
 sum(ExpressionData_Filtered_SDPerGene==0)
 #[1] 0
-#good - those genes were filtered out as expected.
 
-#For that last bit of coding I made use of a trick
-#if you apply the function "sum" to a logical (true/false) vector, you count the number of "trues", e.g.,
+#Apply the function "sum" to a logical (true/false) vector, count the number of "trues"
 sum(c(TRUE, FALSE, TRUE, FALSE))
 #[1] 2
 
-#Unfortunately, if we subset the data (e.g., to focus on a region or specific groups) we may still have genes with zero variance 
-#So we'll have to come back and filter some more later <-- we'll get to this next
-
 ########################### DATA SUBSETTING
-#Dataset Subsetting:
-#Before we do much more with the dataset, let's subset down to the samples that we actually plan to use:
-#First, we need to know what we have:
-#How to access different parts of the Summarized Experiment object:
+#Subset down to the samples that we actually plan to use:
 
 colData(SummarizedExperiment_Filtered[[1]])
 #data - organism part, block, treatment, timepoint
@@ -151,14 +80,10 @@ table(SummarizedExperiment_Filtered[[1]]$`organism part`)
 # blood hemibrain spleen
 #.  38.   39.       39
 
-#==============================================I'm interested in blood 
-
-#The distribution of the different phenotypes in this experiment
+#### Subset for "organism part" = blood 
 table(SummarizedExperiment_Filtered[[1]]$treatment)
 #Reference Subject Role.   Social Stress
 #.       57.                   59
-#### purpose = check what we want to sub-set for. 
-#I just want to look at blood for both nonstress and stress treatment groups
 
 table(SummarizedExperiment_Filtered[[1]]$timepoint)
 #(1.5 weeks,5 days) (24 hours,10 days)  (24 hours,5 days)  (6 weeks,10 days) 
@@ -166,26 +91,16 @@ table(SummarizedExperiment_Filtered[[1]]$timepoint)
 ##### There were two time points of exposure... either 5 days or 10 days
 #### There were also three time points for time after stress... either 24 hours, 1.5 weeks, or 6 weeks
 
-#To code this filter: We don't use equals to mean "equals" in R, we use it to define objects
-### This is just an FYI lesson from Megan
-#===========MynewObject=c(1,2,3,4)
-#===========MynewObject<-c(1,2,3,4)
-#So "==" means equals, whereas "!=" means doesn't equal
-
-#When combining together criteria "&" means "AND", "|" (also called the pipe) means "OR"
 SampleFilter<-
   SummarizedExperiment_Filtered[[1]]$`organism part`=="blood"
 
-
-#Subsetting the data to have only blood:
 SummarizedExperiment_Subset<-SummarizedExperiment_Filtered[[1]][,SampleFilter]
 
 SummarizedExperiment_Subset
 # class: SummarizedExperiment 
 # dim: 15569 rows by 38 columns (DIMENSIONS) 
-#This dataset is much smaller now
 
-#Sanity Check: Double-checking that the subsetting worked properly:
+#Double-checking that the subsetting worked properly:
 table(SummarizedExperiment_Subset$`organism part`)
 ###blood 
 ###38 
@@ -202,34 +117,23 @@ str(ExpressionData_Subset)
 # - attr(*, "dimnames")=List of 2
 # ..$ : chr [1:15569] "A_51_P100034" "A_51_P100174" "A_51_P100218" "A_51_P100238" ...
 # ..$ : chr [1:38] "SS_blood_5d_24h_rep5" "C_blood_5d_24h_rep2" "SS_blood_5d_1.5w_rep1" "C_blood_5d_24h_rep3" ...
-########################### highlight text then use command shift c on mac to add # to each line
 
-#Outlier Removal:
-#This would be a good time to check for outliers and remove them if they are present.
-#Creating an example sample-sample correlation scatterplot (data for all genes for 1 sample versus the data for all genes for the second sample)
+####################### CHECK FOR OUTLIERS
+#Create an example sample-sample correlation scatterplot (data for all genes for 1 sample versus the data for all genes for the second sample)
 plot(ExpressionData_Subset[,1]~ExpressionData_Subset[,2])
 
 #Creating a matrix showing how each sample correlates with every other sample:
 CorMatrix<-cor(ExpressionData_Subset)
-
-#Writing that matrix out to your working directory to save it:
-write.csv(CorMatrix, "CorMatrix.csv")
-#### open this file (from working directory in excel to find the specific ones that are outliers
-#### conditional formatting in excel...)
 
 #Creating a hierarchically clustered heatmap illustrating the sample-sample correlation matrix:
 heatmap(CorMatrix)
 #### diagonal line is a bit confusing because each item compared against itself should be the same.The samples that look
 ##### white may be outliers.
 
-
 #Creating a boxplot illustrating the sample-sample correlations for each sample. Outliers should be obvious at this point.
 boxplot(CorMatrix)
-#Looks like maybe there are a few outliers.  Do this BEFORE the analysis so you're not p-hacking based on results that
-## look best...
 
-#If there was an outlier sample, you could remove it using subsetting similar to above by identifying it's column name
-#E.g. (leaving in the third potential outlier)
+#Remove outlier(s) using subsetting by identifying column name
 OutlierFilter<-colnames(ExpressionData_Subset)!="C_blood_10d_24h_rep1" & colnames(ExpressionData_Subset)!="SS_blood_10d_6w_rep2"
 OutlierFilter
 # [1]  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE FALSE  TRUE  TRUE  TRUE  TRUE FALSE
