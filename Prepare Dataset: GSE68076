@@ -19,8 +19,7 @@ https://rdrr.io/github/PavlidisLab/Gemma-API/man/get_dataset_object.html
 #Add filter=TRUE to use Gemma's filtered results (dropping genes with low variability)
 #Add consolidate="average" to consolidate the data for probes representing the same gene.
 
-
-#Input the summarized experiment object for your dataset: GSE68076
+#Input the summarized experiment object for dataset: GSE68076
 SummarizedExperiment_Filtered<-gemma.R::get_dataset_object("GSE68076", type = 'se', filter=TRUE, consolidate="average")
 SummarizedExperiment_Filtered
 ##$`18807`
@@ -46,7 +45,6 @@ min(ExpressionData_Filtered)
 
 2^-11.54013
 #[1] 0.0003357954
-
 
 #Look at the mean vs. variance curve:
 ExpressionData_Filtered_MeanPerGene<-apply(ExpressionData_Filtered, 1, mean)
@@ -153,118 +151,48 @@ ExpressionData_Subset_noBad<-assay(SummarizedExperiment_Subset_noBad)
 str(ExpressionData_Subset_noBad)
 #num [1:15569, 1:36] -0.743 1.135 4.13 1.578 -0.221 ...
 
-########################### <-- signifies section break
-#Filtering Genes...Again:
-#Now that we have subsetted our data, we have a new problem:
-#Gemma filtered out genes that lacked variability in the full dataset
-#..but that doesn't mean all of the remaining genes have variability in this particular subset of samples
-
+########################### DO ANY GENES LACK VARIABILITY?
 ExpressionData_Subset_noBad_SDperGene<-apply(ExpressionData_Subset_noBad, 1, sd)
 min(ExpressionData_Subset_noBad_SDperGene)
-#[1] 0.1110276 <-- We are running the standard deviation function and looking for what the minimum is.  If there's no variation, that's a problem
-### (can't divide by zero and whatnot).  If we had "zero" for this answer, we'd need to do the next part asking how many samples have zero variability
+#[1] 0.1110276 
 
 sum(ExpressionData_Subset_noBad_SDperGene==0)
 #[1] 0
-## No genes with no variability, which is useful because those genes would cause problems - you can't run stats on a variable with no variability! - let's get rid of them.
-### If this showed up as a non-zero number I would need to run the rest of the code in this section
-#...But there is more:
-#We may still have issues with genes that lack any variability *for any particular subgroup of interest* as well.
+## No genes with no variability
 
-#This function calculates the StDev for each treatment group for a particular gene (row of data) because still can't div by zero and we 
-##don't want to crash:
+#Calculate the StDev for each treatment group for a particular gene (row of data) 
 tapply(ExpressionData_Subset_noBad[1,], SummarizedExperiment_Subset_noBad$treatment, sd)
 #reference subject role     social stress (SS) 
 #       0.8017683              0.7220126 
 
-#We want the minimum sd for all of our groups to not be zero:
+#Minimum sd for all of our groups can not be zero:
 min(tapply(ExpressionData_Subset_noBad[1,], SummarizedExperiment_Subset_noBad$treatment, sd))!=0
 #[1] TRUE
 
-#... and we need to know that for all rows (this next line of code takes a long time to run)
 GenesToFilter<-apply(ExpressionData_Subset_noBad, 1, function(y) (min(tapply(y, SummarizedExperiment_Subset_noBad$treatment, sd))!=0))
 head(GenesToFilter)
 
-#How many genes we'll end up keeping
 sum(GenesToFilter)
-#[1] 15569
-### there were no genes with zero variability so we have the same number as before running this.
+#[1] 15569; there were no genes with zero variability so we have the same number as before running this.
 
 SummarizedExperiment_Subset_noBad_Filtered<-SummarizedExperiment_Subset_noBad[GenesToFilter,]
 SummarizedExperiment_Subset_noBad_Filtered
 #class: SummarizedExperiment 
 #dim: 15569 36
 
-#And again, remaking the expression set (double check... dimensions should be different if we had removed genes):
+#Remake the expression set 
 ExpressionData_Subset_noBad_Filtered<-assay(SummarizedExperiment_Subset_noBad_Filtered)
 str(ExpressionData_Subset_noBad_Filtered)
 #num [1:15569, 1:36] -0.743 1.135 4.13 1.578 -0.221 ...
 
-###########################
-
-#Checking for batch confound:
-#Since we are down to the subset of samples that we plan to use, this would be a good time to check for confounds
-#Unfortunately, processing batches are often unbalanced in regards to variables of interest
+########################### IS THERE A BATCH CONFOUND?
 #For this dataset, Gemma has all of the processing batch information lumped into one variable
 
 table(SummarizedExperiment_Subset_noBad_Filtered$block)
 #Batch_02_23/09/10 
 #36
-### This did not create a table so I'm confused lol (8.31.23, this is just because everything is in one batch)
-#this function breaks apart these "blocks" into specific batch-related variables: <-- SKIP This line for my dataset since I didn't have different blocks
-###strsplit(SummarizedExperiment_Subset_noBad_Filtered$block,)
 
-###########################RNASeqCODE DOESN"T APPLY TO MICROARRAY DATA 
-#To make that into an easier-to-use data.frame <-- also not relevant for this datset EIF
-###BatchVariables<-do.call(rbind.data.frame, SummarizedExperiment_Subset_noBad_Filtered$block) 
-###str(BatchVariables)
-#Not relevant for microarray only RNAseq
-#####colnames(BatchVariables)<-c("Device", "Run", "FlowCell", "Lane")
-
-#table(SummarizedExperiment_Subset_noBad_Filtered$treatment, BatchVariables$c..Batch_02_23.09.10....Batch_02_23.09.10....Batch_02_23.09.10...)
-#                                    Batch_02_23/09/10
-#reference subject role                17
-#social stress (SS)                    19
-
-
-#### SKIP The rest of this section
-#table(SummarizedExperiment_Subset_noBad_Filtered$treatment, BatchVariables$Run) 
-#                                   Run=158 Run=206 Run=345 Run=59
-# imipramine                            1       2       0      4
-# ketamine                              1       1       0      4
-# reference substance role,saline       0       1       1      1
-
-#Looks like run and device may be redundant
-#table(BatchVariables$Device, BatchVariables$Run)
-#                     Run=158 Run=206 Run=345 Run=59
-# Device=11V6WR1          0       4       0      0
-# Device=HWI-D00147       0       0       0      9
-# Device=HWI-ST1147       2       0       0      0
-# Device=HWI-ST276        0       0       1      0
-
-#table(SummarizedExperiment_Subset_noBad_Filtered$treatment, BatchVariables$FlowCell)
-#Looks also potentially redundant
-
-#table(BatchVariables$FlowCell, BatchVariables$Run)
-#                       Run=158 Run=206 Run=345 Run=59
-# Flowcell=C2GWMACXX       0       0       0      9
-# Flowcell=C34A7ACXX       2       0       0      0
-# Flowcell=C3H70ACXX       0       0       1      0
-# Flowcell=C3HBLACXX       0       4       0      0
-#yep
-
-#RNASeqCODE table(SummarizedExperiment_Subset_noBad_Filtered$treatment, BatchVariables$Lane)
-#                                   Lane=1 Lane=2 Lane=3 Lane=4 Lane=5 Lane=6 Lane=7 Lane=8
-# imipramine                           1      1      1      1      0      1      1      1
-# ketamine                             0      1      2      1      1      0      1      0
-# reference substance role,saline      1      1      1      0      0      0      0      0
-
-#Too many Lanes to take into consideration
-
-
-########################### END OF RNASeq-ONLY CODE
-
-#Principal components analysis:
+########################### DATA EXPLORATION: PRINCIPAL COMPONENT ANALYSIS
 #Let's see what the largest sources of variation are in the dataset
 #We are particularly interested in determining which variables we should include as co-variates in our model
 #E.g., if a technical variable (e.g., batch) is the main source of variation in the data, we should probably control for it
@@ -282,21 +210,13 @@ PC3<-pca_output$x[,3]
 PC4<-pca_output$x[,4]
 
 #Output a scree plot for the PCA (no outliers):
-#This plot illustrates the proportion of variance explained by each principal component (PC):
 png("10 PCA Scree Plot1.png")
 plot(summary(pca_output)$importance[2,]~(c(1:length(summary(pca_output)$importance[2,]))), main="Variance Explained by Each Principal Component", xlab="PC #", ylab="Proportion of Variance Explained", col=2)
 dev.off()
 
-#Output <-- SHOWS UP IN THE FOLDER I ASSIGNED a scatterplot illustrating the relationship between Principal components 1 & 2 (PC1 & PC2):
 png("10 PC1 vs PC2.png")
 plot(PC1~PC2, main="Principal Components Analysis")
 dev.off()
-
-#You can color these plots in using different variables in the dataset 
-#This can help explain the main sources of variation in the data
-#Technical variables (brain region, batch) tend to be the main culprits
-#plot(PC1~PC2, main="Principal Components Analysis", col=as.factor(BatchVariables$Run))
-#PC1 and 2, don't seem to be related to our main batch variable <-- this is empty for me because I don't have "run" as a variable
 
 plot(PC1~PC2, main="Principal Components Analysis", col=as.factor(SummarizedExperiment_Subset_noBad_Filtered$treatment))
 #Here we see PC1 and PC2 for treatment (stress vs. non stress).  Not nearly the bunching we'd hope if there was an effect of treatment.
