@@ -22,4 +22,5 @@ Step 5: SimpleMetaEIF11.30.23.R
 https://github.com/LizbethMrtn/BloodStressMetaAnalysis/blob/main/Step%205%3A%20SimpleMetaEIF11.30.23.R
 
 # STEP 6: fGSEA
+Step 6: fGSEA 5.13.24
 https://github.com/LizbethMrtn/BloodStressMetaAnalysis/blob/main/Step%206:%20fGSEA%205.13.24
